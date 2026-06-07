@@ -693,8 +693,12 @@ pub(crate) fn resolve_aggregate_api_rotation_candidates(
             .find_aggregate_api_by_id(api_id)
             .map_err(|err| err.to_string())?
         {
-            candidates.retain(|api| api.id != preferred.id);
-            candidates.insert(0, preferred);
+            let preferred_provider_matches =
+                normalize_provider_type_value(preferred.provider_type.as_str()) == provider_type;
+            if preferred.status == "active" && preferred_provider_matches {
+                candidates.retain(|api| api.id != preferred.id);
+                candidates.insert(0, preferred);
+            }
         }
     }
 
@@ -1159,6 +1163,7 @@ pub(in super::super) fn proxy_aggregate_request(
 #[cfg(test)]
 mod bridge_tests {
     use super::*;
+    use codexmanager_core::storage::now_ts;
 
     /// 函数 `candidate`
     ///
@@ -1334,6 +1339,53 @@ mod bridge_tests {
             std::env::remove_var("CODEXMANAGER_ROUTE_STRATEGY");
         }
         crate::gateway::reload_runtime_config_from_env();
+    }
+
+    #[test]
+    fn disabled_preferred_aggregate_api_is_not_reinserted_into_candidates() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        storage.init().expect("init storage");
+        let now = now_ts();
+        for (id, status, sort) in [("agg-disabled", "disabled", 0_i64), ("agg-active", "active", 1)]
+        {
+            storage
+                .insert_aggregate_api(&AggregateApi {
+                    id: id.to_string(),
+                    provider_type: AGGREGATE_API_PROVIDER_CODEX.to_string(),
+                    supplier_name: Some(id.to_string()),
+                    sort,
+                    url: format!("https://{id}.example.com"),
+                    auth_type: AGGREGATE_API_AUTH_APIKEY.to_string(),
+                    auth_params_json: None,
+                    action: None,
+                    model_override: None,
+                    status: status.to_string(),
+                    created_at: now,
+                    updated_at: now,
+                    last_test_at: None,
+                    last_test_status: None,
+                    last_test_error: None,
+                    balance_query_enabled: false,
+                    balance_query_template: None,
+                    balance_query_base_url: None,
+                    balance_query_user_id: None,
+                    balance_query_config_json: None,
+                    last_balance_at: None,
+                    last_balance_status: None,
+                    last_balance_error: None,
+                    last_balance_json: None,
+                })
+                .expect("insert aggregate api");
+        }
+
+        let candidates = resolve_aggregate_api_rotation_candidates(
+            &storage,
+            "openai_compat",
+            Some("agg-disabled"),
+        )
+        .expect("resolve candidates");
+
+        assert_eq!(ids(&candidates), vec!["agg-active"]);
     }
 }
 

@@ -583,6 +583,31 @@ pub(super) fn apply_request_overrides_with_service_tier_and_prompt_cache_key_sco
         false,
         service_tier,
         allow_codex_compat_rewrite,
+        false,
+    )
+}
+
+pub(super) fn apply_request_forced_model_override_with_service_tier_and_prompt_cache_key_scope(
+    path: &str,
+    body: Vec<u8>,
+    model_slug: Option<&str>,
+    reasoning_effort: Option<&str>,
+    service_tier: Option<&str>,
+    upstream_base_url: Option<&str>,
+    prompt_cache_key: Option<&str>,
+    allow_codex_compat_rewrite: bool,
+) -> Vec<u8> {
+    apply_request_overrides_with_prompt_cache_key_mode(
+        path,
+        body,
+        model_slug,
+        reasoning_effort,
+        upstream_base_url,
+        prompt_cache_key,
+        false,
+        service_tier,
+        allow_codex_compat_rewrite,
+        true,
     )
 }
 
@@ -670,6 +695,31 @@ pub(super) fn apply_request_overrides_with_service_tier_and_forced_prompt_cache_
         true,
         service_tier,
         allow_codex_compat_rewrite,
+        false,
+    )
+}
+
+pub(super) fn apply_request_forced_model_override_with_service_tier_and_forced_prompt_cache_key_scope(
+    path: &str,
+    body: Vec<u8>,
+    model_slug: Option<&str>,
+    reasoning_effort: Option<&str>,
+    service_tier: Option<&str>,
+    upstream_base_url: Option<&str>,
+    prompt_cache_key: Option<&str>,
+    allow_codex_compat_rewrite: bool,
+) -> Vec<u8> {
+    apply_request_overrides_with_prompt_cache_key_mode(
+        path,
+        body,
+        model_slug,
+        reasoning_effort,
+        upstream_base_url,
+        prompt_cache_key,
+        true,
+        service_tier,
+        allow_codex_compat_rewrite,
+        true,
     )
 }
 
@@ -701,6 +751,7 @@ fn apply_request_overrides_with_prompt_cache_key_mode(
     force_prompt_cache_key: bool,
     service_tier: Option<&str>,
     allow_codex_compat_rewrite: bool,
+    force_model_override: bool,
 ) -> Vec<u8> {
     let use_codex_responses_compat = should_apply_codex_responses_compat(path, upstream_base_url);
     let use_codex_compat_rewrite = allow_codex_compat_rewrite && use_codex_responses_compat;
@@ -724,9 +775,18 @@ fn apply_request_overrides_with_prompt_cache_key_mode(
             let mut changed = false;
             let mut dropped_keys = Vec::new();
 
-            let effective_model = compact_model_override
-                .as_deref()
-                .or(normalized_model.as_deref());
+            let client_model = obj
+                .get("model")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            let effective_model = compact_model_override.as_deref().or_else(|| {
+                if client_model.is_some() && !force_model_override {
+                    None
+                } else {
+                    normalized_model.as_deref()
+                }
+            });
             if let Some(model) = effective_model {
                 let forwarded_model = super::resolve_builtin_forwarded_model(model)
                     .unwrap_or_else(|| model.to_string());
@@ -740,9 +800,24 @@ fn apply_request_overrides_with_prompt_cache_key_mode(
                 changed = true;
             }
 
-            if let Some(level) = normalized_reasoning.as_deref() {
-                if responses::apply_reasoning_override(path, obj, Some(level)) {
-                    changed = true;
+            let has_client_reasoning = obj
+                .get("reasoning")
+                .and_then(|value| value.get("effort"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .or_else(|| {
+                    obj.get("reasoning_effort")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                })
+                .is_some();
+            if !has_client_reasoning {
+                if let Some(level) = normalized_reasoning.as_deref() {
+                    if responses::apply_reasoning_override(path, obj, Some(level)) {
+                        changed = true;
+                    }
                 }
             }
 
@@ -778,7 +853,7 @@ fn apply_request_overrides_with_prompt_cache_key_mode(
                 changed = true;
             }
 
-            if let Some(level) = normalized_reasoning.as_deref() {
+            if let Some(level) = normalized_reasoning.as_deref().filter(|_| !has_client_reasoning) {
                 if chat_completions::apply_reasoning_override(chat_rules_path.as_str(), obj, Some(level))
                 {
                     changed = true;

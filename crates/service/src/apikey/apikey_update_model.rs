@@ -88,6 +88,7 @@ pub(crate) fn update_api_key_model(
             normalized_account_plan_filter.as_deref(),
         )
         .map_err(|e| e.to_string())?;
+    crate::gateway::invalidate_candidate_cache();
     if has_quota_limit_tokens {
         storage
             .upsert_api_key_quota_limit(key_id, quota_limit_tokens)

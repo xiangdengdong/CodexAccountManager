@@ -17,7 +17,8 @@ services:
     volumes:
       - codexmanager-data:/data
     ports:
-      - "48761:48761"
+      - "127.0.0.1:48760:48760"
+      - "127.0.0.1:48761:48761"
 
 volumes:
   codexmanager-data:

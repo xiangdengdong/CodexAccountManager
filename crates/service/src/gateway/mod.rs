@@ -147,6 +147,8 @@ pub(crate) use request_log::{RequestLogTraceContext, RequestLogUsage};
 #[cfg(test)]
 use request_rewrite::apply_request_overrides_with_service_tier_and_prompt_cache_key;
 use request_rewrite::{
+    apply_request_forced_model_override_with_service_tier_and_forced_prompt_cache_key_scope,
+    apply_request_forced_model_override_with_service_tier_and_prompt_cache_key_scope,
     apply_request_overrides_with_service_tier_and_forced_prompt_cache_key_scope,
     apply_request_overrides_with_service_tier_and_prompt_cache_key_scope, compute_upstream_url,
 };

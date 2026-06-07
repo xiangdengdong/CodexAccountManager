@@ -263,7 +263,7 @@ fn respond_model_route_error(
 
 #[allow(clippy::too_many_arguments)]
 fn resolve_aggregate_candidates_for_route(
-    storage: &crate::storage_helpers::StorageHandle,
+    storage: &codexmanager_core::storage::Storage,
     protocol_type: &str,
     aggregate_api_id: Option<&str>,
     model_for_log: Option<&str>,
@@ -281,13 +281,17 @@ fn resolve_aggregate_candidates_for_route(
     };
     candidates = candidates
         .into_iter()
-        .filter_map(|mut api| {
-            let mapping = storage
-                .find_enabled_model_source_mapping(model, "aggregate_api", api.id.as_str())
-                .ok()
-                .flatten()?;
-            api.model_override = Some(mapping.upstream_model);
-            Some(api)
+        .map(|mut api| {
+            if let Ok(Some(mapping)) =
+                storage.find_enabled_model_source_mapping(model, "aggregate_api", api.id.as_str())
+            {
+                api.model_override = Some(mapping.upstream_model);
+            } else {
+                // When the client explicitly picked a model, let the request body carry it
+                // through unless this source needs a translated upstream slug.
+                api.model_override = None;
+            }
+            api
         })
         .collect();
     if candidates.is_empty() {
@@ -1180,6 +1184,74 @@ mod tests {
         assert_eq!(mappings.len(), 1);
         assert_eq!(mappings[0].source_kind, "aggregate_api");
         assert_eq!(mappings[0].source_id, "agg-route");
+    }
+
+    #[test]
+    fn aggregate_candidates_keep_follow_request_source_without_model_mapping() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        storage.init().expect("init storage");
+        insert_test_aggregate_api(&storage, "agg-follow");
+        seed_platform_catalog(&storage, "gpt-follow");
+
+        let candidates = super::resolve_aggregate_candidates_for_route(
+            &storage,
+            crate::apikey_profile::PROTOCOL_OPENAI_COMPAT,
+            None,
+            Some("gpt-follow"),
+        )
+        .expect("aggregate candidate should follow client model without explicit mapping");
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].id, "agg-follow");
+        assert_eq!(candidates[0].model_override, None);
+    }
+
+    #[test]
+    fn aggregate_candidates_clear_default_model_override_when_client_model_has_no_mapping() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        storage.init().expect("init storage");
+        let now = now_ts();
+        storage
+            .insert_aggregate_api(&AggregateApi {
+                id: "agg-default-override".to_string(),
+                provider_type: "codex".to_string(),
+                supplier_name: Some("agg-default-override".to_string()),
+                sort: 0,
+                url: "https://agg-default-override.example/v1".to_string(),
+                auth_type: "apikey".to_string(),
+                auth_params_json: None,
+                action: None,
+                model_override: Some("gpt-5.4".to_string()),
+                status: "active".to_string(),
+                created_at: now,
+                updated_at: now,
+                last_test_at: None,
+                last_test_status: None,
+                last_test_error: None,
+                balance_query_enabled: false,
+                balance_query_template: None,
+                balance_query_base_url: None,
+                balance_query_user_id: None,
+                balance_query_config_json: None,
+                last_balance_at: None,
+                last_balance_status: None,
+                last_balance_error: None,
+                last_balance_json: None,
+            })
+            .expect("insert aggregate api");
+        seed_platform_catalog(&storage, "gpt-5.5");
+
+        let candidates = super::resolve_aggregate_candidates_for_route(
+            &storage,
+            crate::apikey_profile::PROTOCOL_OPENAI_COMPAT,
+            None,
+            Some("gpt-5.5"),
+        )
+        .expect("aggregate candidate should follow client model");
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].id, "agg-default-override");
+        assert_eq!(candidates[0].model_override, None);
     }
 
     #[test]

@@ -204,7 +204,7 @@ fn chat_completions_uses_reasoning_effort_and_drops_non_official_keys() {
         value
             .get("reasoning_effort")
             .and_then(serde_json::Value::as_str),
-        Some("medium")
+        Some("high")
     );
     assert!(value.get("reasoning").is_none());
     assert!(value.get("unknown_field").is_none());
@@ -349,7 +349,7 @@ fn chat_completions_normalizes_responses_function_tools() {
 /// # 返回
 /// 无
 #[test]
-fn responses_overrides_model_and_reasoning_effort() {
+fn responses_keeps_client_model_and_reasoning_when_present() {
     let _guard = crate::test_env_guard();
     let body = json!({
         "model": "gpt-5.3-codex",
@@ -359,7 +359,7 @@ fn responses_overrides_model_and_reasoning_effort() {
     let out = apply_codex_compat_request_overrides(
         "/v1/responses",
         serde_json::to_vec(&body).expect("serialize request body"),
-        Some("gpt-5.3-codex"),
+        Some("gpt-5.4"),
         Some("medium"),
         Some("https://chatgpt.com/backend-api/codex"),
     );
@@ -373,7 +373,7 @@ fn responses_overrides_model_and_reasoning_effort() {
             .get("reasoning")
             .and_then(|v| v.get("effort"))
             .and_then(serde_json::Value::as_str),
-        Some("medium")
+        Some("high")
     );
     assert!(value
         .get("instructions")
@@ -2260,7 +2260,7 @@ fn responses_apply_global_model_forward_rules_when_platform_key_not_bound() {
 }
 
 #[test]
-fn responses_platform_key_bound_model_overrides_global_model_forward_rules() {
+fn responses_client_model_overrides_platform_key_and_global_model_forward_rules() {
     let _guard = crate::test_env_guard();
     let original_rules = crate::gateway::current_model_forward_rules();
     crate::gateway::set_model_forward_rules("spark*=gpt-5.4-mini")
@@ -2281,7 +2281,7 @@ fn responses_platform_key_bound_model_overrides_global_model_forward_rules() {
 
     assert_eq!(
         value.get("model").and_then(serde_json::Value::as_str),
-        Some("gpt-5.4")
+        Some("spark")
     );
 
     let _ = crate::gateway::set_model_forward_rules(original_rules.as_str());

@@ -141,7 +141,7 @@ impl CandidateExecutionState {
                 let should_force_prompt_cache_key =
                     effective_prompt_cache_key.is_some() && has_local_thread_anchor;
                 let rewritten = if should_force_prompt_cache_key {
-                    super::super::super::apply_request_overrides_with_service_tier_and_forced_prompt_cache_key_scope(
+                    super::super::super::apply_request_forced_model_override_with_service_tier_and_forced_prompt_cache_key_scope(
                         path,
                         body.to_vec(),
                         model_override,
@@ -152,7 +152,7 @@ impl CandidateExecutionState {
                         false,
                     )
                 } else {
-                    super::super::super::apply_request_overrides_with_service_tier_and_prompt_cache_key_scope(
+                    super::super::super::apply_request_forced_model_override_with_service_tier_and_prompt_cache_key_scope(
                         path,
                         body.to_vec(),
                         model_override,

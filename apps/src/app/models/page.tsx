@@ -267,6 +267,8 @@ export default function ModelsPage() {
   const filteredModels = useMemo(() => {
     const keyword = search.trim().toLowerCase();
     return models.filter((model) => {
+      if (!keyword && model.visibility === "hide") return false;
+
       const matchesKeyword =
         !keyword ||
         model.slug.toLowerCase().includes(keyword) ||

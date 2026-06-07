@@ -1,5 +1,4 @@
 use codexmanager_core::storage::{Account, Storage, Token};
-use std::collections::HashSet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in super::super) enum CandidateSkipReason {
@@ -20,7 +19,7 @@ pub(in super::super) enum CandidateSkipReason {
 /// 返回函数执行结果
 pub(crate) fn prepare_gateway_candidates(
     storage: &Storage,
-    request_model: Option<&str>,
+    _request_model: Option<&str>,
     account_plan_filter: Option<&str>,
 ) -> Result<Vec<(Account, Token)>, String> {
     // 中文注释：保持账号原始顺序（按账户排序字段）作为候选顺序，失败时再依次切下一个。
@@ -37,20 +36,6 @@ pub(crate) fn prepare_gateway_candidates(
                 Some(plan_filter),
             )
         });
-    }
-    let normalized_model = request_model
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    if let Some(model) = normalized_model {
-        let _ = crate::apikey_models::bootstrap_account_pool_model_routes(storage, false);
-        let account_source_ids = storage
-            .list_enabled_model_source_mappings_for_platform(model)
-            .map_err(|err| format!("list model source mappings failed: {err}"))?
-            .into_iter()
-            .filter(|mapping| mapping.source_kind == "openai_account")
-            .map(|mapping| mapping.source_id)
-            .collect::<HashSet<_>>();
-        candidates.retain(|(account, _)| account_source_ids.contains(&account.id));
     }
     Ok(candidates)
 }
@@ -168,7 +153,7 @@ pub(in super::super) fn candidate_skip_reason_for_proxy(
 mod tests {
     use super::{
         allow_openai_fallback_for_account, candidate_skip_reason_for_proxy,
-        free_account_model_override, CandidateSkipReason,
+        free_account_model_override, prepare_gateway_candidates, CandidateSkipReason,
     };
     use codexmanager_core::storage::{now_ts, Account, Storage, Token, UsageSnapshotRecord};
 
@@ -246,6 +231,43 @@ mod tests {
         let _ = crate::gateway::set_free_account_max_model(&original);
 
         assert_eq!(actual.as_deref(), Some("gpt-5.2"));
+    }
+
+    #[test]
+    fn account_candidates_keep_follow_request_account_without_model_mapping() {
+        let storage = Storage::open_in_memory().expect("open");
+        storage.init().expect("init");
+        let now = now_ts();
+        storage
+            .insert_account(&Account {
+                id: "acc-follow".to_string(),
+                label: "acc-follow".to_string(),
+                issuer: "issuer".to_string(),
+                chatgpt_account_id: None,
+                workspace_id: None,
+                group_name: None,
+                sort: 0,
+                status: "active".to_string(),
+                created_at: now,
+                updated_at: now,
+            })
+            .expect("insert account");
+        storage
+            .insert_token(&Token {
+                account_id: "acc-follow".to_string(),
+                id_token: "header.payload.sig".to_string(),
+                access_token: "header.payload.sig".to_string(),
+                refresh_token: "refresh".to_string(),
+                api_key_access_token: None,
+                last_refresh: now,
+            })
+            .expect("insert token");
+
+        let candidates =
+            prepare_gateway_candidates(&storage, Some("gpt-follow"), None).expect("candidates");
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].0.id, "acc-follow");
     }
 
     /// 函数 `free_account_model_override_accepts_single_window_weekly_account`

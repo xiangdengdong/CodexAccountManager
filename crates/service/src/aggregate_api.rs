@@ -2931,6 +2931,7 @@ pub(crate) fn update_aggregate_api(
             .set_quota_source_model_assignments("aggregate_api", api_id, model_slugs.as_slice())
             .map_err(|err| err.to_string())?;
     }
+    crate::gateway::invalidate_candidate_cache();
     Ok(())
 }
 
@@ -2952,7 +2953,9 @@ pub(crate) fn delete_aggregate_api(api_id: &str) -> Result<(), String> {
     let storage = open_storage().ok_or_else(|| "storage unavailable".to_string())?;
     storage
         .delete_aggregate_api(api_id)
-        .map_err(|err| err.to_string())
+        .map_err(|err| err.to_string())?;
+    crate::gateway::invalidate_candidate_cache();
+    Ok(())
 }
 
 /// 函数 `read_aggregate_api_secret`

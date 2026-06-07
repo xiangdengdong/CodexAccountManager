@@ -31,7 +31,7 @@ fn html_content_type_detection() {
 /// 无
 #[test]
 fn apply_request_overrides_accepts_xhigh() {
-    let body = br#"{"model":"gpt-5.3-codex","reasoning":{"effort":"medium"}}"#.to_vec();
+    let body = br#"{"model":"gpt-5.3-codex"}"#.to_vec();
     let updated = apply_request_overrides(
         "/v1/responses",
         body,

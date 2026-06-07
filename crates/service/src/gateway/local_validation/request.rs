@@ -1502,10 +1502,12 @@ fn apply_passthrough_request_overrides(
     bool,
     Option<String>,
 ) {
+    let client_request_meta = super::super::parse_request_metadata(&body);
     let (default_effective_model, effective_reasoning, effective_service_tier) =
         resolve_effective_request_overrides(api_key);
     let effective_model = model_override
         .map(str::to_string)
+        .or_else(|| client_request_meta.model.clone())
         .or(default_effective_model);
     let rewritten_body =
         super::super::apply_request_overrides_with_service_tier_and_prompt_cache_key_scope(
@@ -1525,9 +1527,10 @@ fn apply_passthrough_request_overrides(
     let request_meta = super::super::parse_request_metadata(&rewritten_body);
     (
         rewritten_body,
-        request_meta.model.or(api_key.model_slug.clone()),
+        request_meta.model.or(client_request_meta.model).or(api_key.model_slug.clone()),
         request_meta
             .reasoning_effort
+            .or(client_request_meta.reasoning_effort)
             .or(api_key.reasoning_effort.clone()),
         explicit_service_tier_for_log,
         request_meta.service_tier,
@@ -1952,9 +1955,13 @@ pub(super) fn build_local_validation_result(
         .map_err(|err| LocalValidationError::new(400, err.message()))?;
 
     let request_meta = super::super::parse_request_metadata(&body);
-    let model_for_log = request_meta.model.or(api_key.model_slug.clone());
+    let model_for_log = request_meta
+        .model
+        .or(client_request_meta.model.clone())
+        .or(api_key.model_slug.clone());
     let reasoning_for_log = request_meta
         .reasoning_effort
+        .or(client_request_meta.reasoning_effort)
         .or(api_key.reasoning_effort.clone());
     let service_tier_for_log = client_request_meta.service_tier;
     let effective_service_tier_for_log = request_meta.service_tier;

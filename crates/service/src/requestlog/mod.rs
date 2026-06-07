@@ -1,7 +1,5 @@
 #[path = "requestlog_clear.rs"]
 pub(crate) mod clear;
-#[path = "requestlog_error_list.rs"]
-pub(crate) mod error_list;
 #[path = "requestlog_list.rs"]
 pub(crate) mod list;
 #[path = "requestlog_summary.rs"]

@@ -2242,18 +2242,18 @@ fn responses_apply_global_model_forward_rules_when_platform_key_not_bound() {
         "model": "spark",
         "input": "hello"
     });
-    let out = apply_request_overrides(
+    let out = apply_codex_compat_request_overrides(
         "/v1/responses",
         serde_json::to_vec(&body).expect("serialize request body"),
         None,
         None,
-        Some("https://api.openai.com/v1"),
+        Some("https://chatgpt.com/backend-api/codex"),
     );
     let value: serde_json::Value = serde_json::from_slice(&out).expect("parse output body");
 
     assert_eq!(
         value.get("model").and_then(serde_json::Value::as_str),
-        Some("spark")
+        Some("gpt-5.4-mini")
     );
 
     let _ = crate::gateway::set_model_forward_rules(original_rules.as_str());
@@ -2319,10 +2319,8 @@ fn responses_compact_applies_compact_model_forward_rules() {
     let _guard = crate::test_env_guard();
     let original_rules = crate::gateway::current_compact_model_forward_rules();
     let _ = crate::gateway::set_compact_model_forward_rules("");
-    crate::gateway::set_compact_model_forward_rules(
-        "gpt-5.4=gpt-5.4-openai-compact",
-    )
-    .expect("set compact model forward rules");
+    crate::gateway::set_compact_model_forward_rules("gpt-5.4=gpt-5.4-openai-compact")
+        .expect("set compact model forward rules");
 
     let body = json!({
         "model": "gpt-5.4",
@@ -2355,7 +2353,10 @@ fn compact_upstream_url_can_be_mapped_to_chat_completions() {
         "/v1/responses/compact",
     );
 
-    assert_eq!(url, "https://chatgpt.com/backend-api/codex/chat/completions");
+    assert_eq!(
+        url,
+        "https://chatgpt.com/backend-api/codex/chat/completions"
+    );
     assert_eq!(
         url_alt.as_deref(),
         Some("https://chatgpt.com/backend-api/codex/v1/chat/completions")
@@ -2384,7 +2385,10 @@ fn responses_compact_bridges_body_to_chat_completions_when_configured() {
     );
     let value: serde_json::Value = serde_json::from_slice(&out).expect("parse output body");
 
-    assert!(value.get("messages").and_then(serde_json::Value::as_array).is_some());
+    assert!(value
+        .get("messages")
+        .and_then(serde_json::Value::as_array)
+        .is_some());
     assert!(value.get("input").is_none());
     assert!(value.get("instructions").is_none());
     assert_eq!(

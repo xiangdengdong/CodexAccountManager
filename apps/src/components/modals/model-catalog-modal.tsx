@@ -24,7 +24,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ManagedModelPayload } from "@/lib/api/account-client";
+import { ManagedModelPayload, ModelPriceRuleUpsertPayload } from "@/lib/api/account-client";
+import type { ModelPriceRuleEntry } from "@/lib/api/account-client";
 import { useI18n } from "@/lib/i18n/provider";
 import { ManagedModelInfo } from "@/types";
 
@@ -35,6 +36,8 @@ interface ModelCatalogModalProps {
   nextSortIndex: number;
   isSaving?: boolean;
   onSave: (payload: ManagedModelPayload) => Promise<ManagedModelInfo | null>;
+  onSavePriceRule?: (payload: ModelPriceRuleUpsertPayload) => Promise<void>;
+  priceRule?: ModelPriceRuleEntry | null;
 }
 
 interface ModelCatalogDraft {
@@ -49,6 +52,9 @@ interface ModelCatalogDraft {
   visibility: string;
   defaultReasoningLevel: string;
   advancedJson: string;
+  inputPricePer1m: string;
+  cachedInputPricePer1m: string;
+  outputPricePer1m: string;
 }
 
 const EDITABLE_ADVANCED_KEYS = [
@@ -195,6 +201,7 @@ function buildAdvancedJson(model: ManagedModelInfo | null | undefined): string {
 function buildDraft(
   model: ManagedModelInfo | null | undefined,
   nextSortIndex: number,
+  priceRule?: ModelPriceRuleEntry | null,
 ): ModelCatalogDraft {
   return {
     slug: model?.slug || "",
@@ -208,6 +215,9 @@ function buildDraft(
     visibility: normalizeVisibilityValue(model?.visibility),
     defaultReasoningLevel: model?.defaultReasoningLevel || "",
     advancedJson: buildAdvancedJson(model),
+    inputPricePer1m: priceRule?.inputPricePer1m != null ? String(priceRule.inputPricePer1m) : "",
+    cachedInputPricePer1m: priceRule?.cachedInputPricePer1m != null ? String(priceRule.cachedInputPricePer1m) : "",
+    outputPricePer1m: priceRule?.outputPricePer1m != null ? String(priceRule.outputPricePer1m) : "",
   };
 }
 
@@ -261,21 +271,47 @@ export function ModelCatalogModal({
   nextSortIndex,
   isSaving = false,
   onSave,
+  onSavePriceRule,
+  priceRule,
 }: ModelCatalogModalProps) {
   const { t } = useI18n();
   const [draft, setDraft] = useState<ModelCatalogDraft>(() =>
-    buildDraft(model, nextSortIndex),
+    buildDraft(model, nextSortIndex, priceRule),
   );
+  const [priceError, setPriceError] = useState<string | null>(null);
+  const [savingPrice, setSavingPrice] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     const frameId = window.requestAnimationFrame(() => {
-      setDraft(buildDraft(model, nextSortIndex));
+      setDraft(buildDraft(model, nextSortIndex, priceRule));
+      setPriceError(null);
+      setSavingPrice(false);
     });
     return () => {
       window.cancelAnimationFrame(frameId);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [model, nextSortIndex, open]);
+
+  useEffect(() => {
+    if (!open) return;
+    setDraft((prev) => ({
+      ...prev,
+      inputPricePer1m:
+        priceRule?.inputPricePer1m != null
+          ? String(priceRule.inputPricePer1m)
+          : "",
+      cachedInputPricePer1m:
+        priceRule?.cachedInputPricePer1m != null
+          ? String(priceRule.cachedInputPricePer1m)
+          : "",
+      outputPricePer1m:
+        priceRule?.outputPricePer1m != null
+          ? String(priceRule.outputPricePer1m)
+          : "",
+    }));
+  }, [priceRule, open]);
 
   const title = useMemo(
     () => (model ? t("编辑模型") : t("新增模型")),
@@ -292,7 +328,8 @@ export function ModelCatalogModal({
   const handleSave = async () => {
     const slug = draft.slug.trim();
     if (!slug) {
-      throw new Error("模型 slug 不能为空");
+      setPriceError("模型 slug 不能为空");
+      return;
     }
 
     const advancedFields = parseJsonObject(draft.advancedJson, "高级 JSON");
@@ -312,6 +349,31 @@ export function ModelCatalogModal({
       updatedAt: model?.updatedAt ?? 0,
     };
 
+    const ip = draft.inputPricePer1m.trim();
+    const cp = draft.cachedInputPricePer1m.trim();
+    const op = draft.outputPricePer1m.trim();
+    const hasAnyPriceText = ip !== "" || cp !== "" || op !== "";
+    const isClearingExistingOverride = !hasAnyPriceText && !!priceRule?.id;
+    const hasUserInput = hasAnyPriceText || isClearingExistingOverride;
+
+    if (hasUserInput) {
+      const inputNum = ip !== "" ? Number(ip) : null;
+      const cachedNum = cp !== "" ? Number(cp) : null;
+      const outputNum = op !== "" ? Number(op) : null;
+      if (
+        (inputNum !== null && (!Number.isFinite(inputNum) || inputNum < 0)) ||
+        (cachedNum !== null && (!Number.isFinite(cachedNum) || cachedNum < 0)) ||
+        (outputNum !== null && (!Number.isFinite(outputNum) || outputNum < 0))
+      ) {
+        setPriceError("价格必须为非负有效数字");
+        return;
+      }
+      if (!isClearingExistingOverride && (inputNum == null || outputNum == null)) {
+        setPriceError("输入价格和输出价格必须同时填写");
+        return;
+      }
+    }
+
     const saved = await onSave({
       previousSlug: model?.slug || null,
       sourceKind: nextModel.sourceKind,
@@ -320,6 +382,29 @@ export function ModelCatalogModal({
       model: nextModel,
     });
     if (saved) {
+      if (onSavePriceRule && slug && hasUserInput) {
+        try {
+          setSavingPrice(true);
+          await onSavePriceRule({
+            id: priceRule?.id,
+            provider: priceRule?.provider ?? undefined,
+            modelPattern: slug,
+            inputPricePer1m: isClearingExistingOverride ? 0 : Number(ip),
+            cachedInputPricePer1m: isClearingExistingOverride
+              ? null
+              : (cp !== "" ? Number(cp) : null),
+            outputPricePer1m: isClearingExistingOverride ? 0 : Number(op),
+            enabled: isClearingExistingOverride ? false : true,
+          });
+        } catch (error) {
+          setPriceError(
+            `模型已保存，但价格保存失败: ${error instanceof Error ? error.message : String(error)}`,
+          );
+          setSavingPrice(false);
+          return;
+        }
+        setSavingPrice(false);
+      }
       onOpenChange(false);
     }
   };
@@ -501,6 +586,60 @@ export function ModelCatalogModal({
             </div>
 
             <div className="space-y-2">
+              <Label className="text-sm font-medium">{t("Token 价格 (USD / 1M tokens)")}</Label>
+              <p className="text-xs text-muted-foreground">
+                {t("零表示不计费，价格将用于请求成本估算。")}
+              </p>
+              {priceError ? (
+                <p className="text-xs text-destructive">{priceError}</p>
+              ) : null}
+            </div>
+            <div className="grid gap-4 md:grid-cols-3">
+              <div className="space-y-2">
+                <Label htmlFor="price-input">{t("输入价格")}</Label>
+                <Input
+                  id="price-input"
+                  type="number"
+                  step="0.0001"
+                  min="0"
+                  value={draft.inputPricePer1m}
+                  onChange={(event) =>
+                    updateDraft("inputPricePer1m", event.target.value)
+                  }
+                  placeholder="0"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="price-cached">{t("缓存输入价格")}</Label>
+                <Input
+                  id="price-cached"
+                  type="number"
+                  step="0.0001"
+                  min="0"
+                  value={draft.cachedInputPricePer1m}
+                  onChange={(event) =>
+                    updateDraft("cachedInputPricePer1m", event.target.value)
+                  }
+                  placeholder="0"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="price-output">{t("输出价格")}</Label>
+                <Input
+                  id="price-output"
+                  type="number"
+                  step="0.0001"
+                  min="0"
+                  value={draft.outputPricePer1m}
+                  onChange={(event) =>
+                    updateDraft("outputPricePer1m", event.target.value)
+                  }
+                  placeholder="0"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
               <Label htmlFor="model-advanced-json">{t("高级 JSON")}</Label>
               <Textarea
                 id="model-advanced-json"
@@ -532,7 +671,7 @@ export function ModelCatalogModal({
               onClick={() => {
                 void handleSave();
               }}
-              disabled={isSaving}
+              disabled={isSaving || savingPrice}
             >
               {isSaving ? t("保存中...") : t("保存模型")}
             </Button>

@@ -3,7 +3,6 @@ use codexmanager_core::storage::{Account, Storage, Token};
 use std::time::Instant;
 
 use crate::account_status::mark_account_unavailable_for_refresh_token_error;
-use crate::gateway::error_log::GatewayErrorLogInput;
 use crate::usage_token_refresh::token_refresh_ahead_secs;
 
 use super::super::support::backoff;
@@ -38,6 +37,13 @@ fn should_failover_immediately_for_cloudflare(
 ) -> bool {
     has_more_candidates
         && should_treat_as_challenge_for_retry(status, upstream_content_type, upstream_cf_ray)
+}
+
+fn challenge_cooldown_reason(protocol_type: &str) -> super::super::super::CooldownReason {
+    if protocol_type == crate::apikey_profile::PROTOCOL_ANTHROPIC_NATIVE {
+        return super::super::super::CooldownReason::AnthropicChallenge;
+    }
+    super::super::super::CooldownReason::Challenge
 }
 
 /// 函数 `try_refresh_chatgpt_access_token`
@@ -220,21 +226,6 @@ fn retry_chatgpt_challenge_without_compression(
             url
         );
     }
-    crate::gateway::write_gateway_error_log(GatewayErrorLogInput {
-        account_id: Some(account.id.as_str()),
-        request_path: request_ctx.request_path,
-        method: method.as_str(),
-        stage: "chatgpt_challenge_retry_without_compression",
-        error_kind: Some("cloudflare_challenge"),
-        upstream_url: Some(url),
-        cf_ray: upstream_cf_ray,
-        status_code: Some(status.as_u16()),
-        compression_enabled: crate::gateway::request_compression_enabled(),
-        compression_retry_attempted: true,
-        message: "chatgpt challenge detected; retrying same request without compression",
-        ..GatewayErrorLogInput::default()
-    });
-
     match super::transport::send_upstream_request_without_compression(
         client,
         method,
@@ -250,20 +241,6 @@ fn retry_chatgpt_challenge_without_compression(
     ) {
         Ok(resp) => Ok(resp.status().is_success().then_some(resp)),
         Err(err) => {
-            let err_text = err.to_string();
-            crate::gateway::write_gateway_error_log(GatewayErrorLogInput {
-                account_id: Some(account.id.as_str()),
-                request_path: request_ctx.request_path,
-                method: method.as_str(),
-                stage: "chatgpt_challenge_retry_without_compression_error",
-                error_kind: Some("transport_error"),
-                upstream_url: Some(url),
-                status_code: Some(502),
-                compression_enabled: crate::gateway::request_compression_enabled(),
-                compression_retry_attempted: true,
-                message: err_text.as_str(),
-                ..GatewayErrorLogInput::default()
-            });
             log::warn!(
                 "event=gateway_chatgpt_challenge_retry_without_compression_error path={} status=502 account_id={} err={}",
                 request_ctx.request_path,
@@ -341,7 +318,7 @@ where
     ) {
         super::super::super::mark_account_cooldown(
             &account.id,
-            super::super::super::CooldownReason::Challenge,
+            challenge_cooldown_reason(request_ctx.protocol_type),
         );
         log_gateway_result(
             Some(url),
@@ -594,6 +571,15 @@ where
         }
     }
 
+    if request_ctx.protocol_type == crate::apikey_profile::PROTOCOL_ANTHROPIC_NATIVE
+        && should_treat_as_challenge_for_retry(status, upstream_content_type, upstream_cf_ray)
+    {
+        super::super::super::mark_account_cooldown(
+            &account.id,
+            challenge_cooldown_reason(request_ctx.protocol_type),
+        );
+    }
+
     match decide_upstream_outcome(
         storage,
         &account.id,
@@ -669,6 +655,18 @@ mod tests {
             api_key_access_token: Some("api-key-token".to_string()),
             last_refresh: now,
         }
+    }
+
+    #[test]
+    fn anthropic_challenge_uses_extended_cooldown_reason() {
+        assert_eq!(
+            challenge_cooldown_reason(crate::apikey_profile::PROTOCOL_ANTHROPIC_NATIVE),
+            crate::gateway::CooldownReason::AnthropicChallenge
+        );
+        assert_eq!(
+            challenge_cooldown_reason(crate::apikey_profile::PROTOCOL_OPENAI_COMPAT),
+            crate::gateway::CooldownReason::Challenge
+        );
     }
 
     /// 函数 `retries_server_error_once_before_final_decision`

@@ -281,6 +281,41 @@ fn build_async_upstream_client() -> reqwest::Client {
     build_async_upstream_client_with_proxy(proxy_url.as_deref())
 }
 
+pub(crate) fn apply_blocking_upstream_proxy(
+    mut builder: reqwest::blocking::ClientBuilder,
+    proxy_url: Option<&str>,
+    invalid_event: &str,
+) -> reqwest::blocking::ClientBuilder {
+    if let Some(proxy_url) = proxy_url.map(str::trim).filter(|value| !value.is_empty()) {
+        match Proxy::all(proxy_url) {
+            Ok(proxy) => {
+                builder = builder.proxy(proxy);
+            }
+            Err(err) => {
+                log::warn!("event={} proxy={} err={}", invalid_event, proxy_url, err);
+            }
+        }
+    }
+    builder
+}
+
+pub(crate) fn apply_async_upstream_proxy(
+    mut builder: reqwest::ClientBuilder,
+    proxy_url: Option<&str>,
+    invalid_event: &str,
+) -> reqwest::ClientBuilder {
+    if let Some(proxy_url) = proxy_url.map(str::trim).filter(|value| !value.is_empty()) {
+        match Proxy::all(proxy_url) {
+            Ok(proxy) => {
+                builder = builder.proxy(proxy);
+            }
+            Err(err) => {
+                log::warn!("event={} proxy={} err={}", invalid_event, proxy_url, err);
+            }
+        }
+    }
+    builder
+}
 /// 函数 `build_upstream_client_with_proxy`
 ///
 /// 作者: gaohongshun
@@ -1925,9 +1960,9 @@ fn normalize_compact_api_path(raw: &str) -> Result<String, String> {
     let canonical = normalized.split('?').next().unwrap_or(normalized).trim();
     match canonical {
         "/v1/responses/compact" | "/v1/chat/completions" => Ok(canonical.to_string()),
-        _ => Err(
-            "compactApiPath must be /v1/responses/compact or /v1/chat/completions".to_string(),
-        ),
+        _ => {
+            Err("compactApiPath must be /v1/responses/compact or /v1/chat/completions".to_string())
+        }
     }
 }
 

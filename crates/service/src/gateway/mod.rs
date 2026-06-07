@@ -68,8 +68,6 @@ mod concurrency;
 mod conversation_binding;
 #[path = "routing/cooldown.rs"]
 mod cooldown;
-#[path = "observability/error_log.rs"]
-mod error_log;
 mod error_response;
 #[path = "routing/failover.rs"]
 mod failover;
@@ -121,7 +119,6 @@ mod trace_log;
 mod upstream;
 
 pub(crate) use concurrency::current_gateway_concurrency_recommendation;
-pub(crate) use error_log::write_gateway_error_log;
 use metrics::{
     account_inflight_count, acquire_account_inflight, begin_gateway_request,
     record_gateway_candidate_skip, record_gateway_cooldown_mark, record_gateway_failover_attempt,
@@ -400,8 +397,8 @@ use runtime_config::{
 };
 use selection::collect_gateway_candidates;
 pub(crate) use selection::{
-    current_quota_guard_config, invalidate_candidate_cache, set_quota_guard_config,
-    QuotaGuardConfig,
+    collect_gateway_candidates_with_low_quota_mode, current_quota_guard_config,
+    invalidate_candidate_cache, set_quota_guard_config, LowQuotaCandidateMode, QuotaGuardConfig,
 };
 #[cfg(test)]
 use token_exchange::account_token_exchange_lock;
@@ -798,6 +795,22 @@ pub(crate) fn current_upstream_proxy_url() -> Option<String> {
     runtime_config::upstream_proxy_url()
 }
 
+pub(crate) fn apply_blocking_upstream_proxy(
+    builder: reqwest::blocking::ClientBuilder,
+    proxy_url: Option<&str>,
+    invalid_event: &str,
+) -> reqwest::blocking::ClientBuilder {
+    runtime_config::apply_blocking_upstream_proxy(builder, proxy_url, invalid_event)
+}
+
+pub(crate) fn apply_async_upstream_proxy(
+    builder: reqwest::ClientBuilder,
+    proxy_url: Option<&str>,
+    invalid_event: &str,
+) -> reqwest::ClientBuilder {
+    runtime_config::apply_async_upstream_proxy(builder, proxy_url, invalid_event)
+}
+
 pub(crate) fn current_upstream_proxy_url_for_account(account_id: &str) -> Option<String> {
     runtime_config::upstream_proxy_url_for_account(account_id)
 }
@@ -1138,7 +1151,7 @@ pub(crate) fn gateway_rewrite_ws_responses_body(
         normalized_service_tier,
         api_key.upstream_base_url.as_deref(),
         prompt_cache_key,
-        false,
+        true,
     )
 }
 

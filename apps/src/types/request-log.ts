@@ -47,31 +47,6 @@ export interface RequestLogListResult {
   pageSize: number;
 }
 
-export interface GatewayErrorLog {
-  traceId: string;
-  keyId: string;
-  accountId: string;
-  requestPath: string;
-  method: string;
-  stage: string;
-  errorKind: string;
-  upstreamUrl: string;
-  cfRay: string;
-  statusCode: number | null;
-  compressionEnabled: boolean;
-  compressionRetryAttempted: boolean;
-  message: string;
-  createdAt: number | null;
-}
-
-export interface GatewayErrorLogListResult {
-  items: GatewayErrorLog[];
-  total: number;
-  page: number;
-  pageSize: number;
-  stages: string[];
-}
-
 export interface RequestLogFilterSummary {
   totalCount: number;
   filteredCount: number;

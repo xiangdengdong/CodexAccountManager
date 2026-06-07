@@ -18,10 +18,9 @@ import {
   AppSettings,
   BackgroundTaskSettings,
   QuotaGuardSettings,
+  RuntimeTimeZone,
   DeviceAuthInfo,
   EnvOverrideCatalogItem,
-  GatewayErrorLog,
-  GatewayErrorLogListResult,
   InstalledPluginSummary,
   LoginStartResult,
   ManagedModelCatalog,
@@ -83,6 +82,12 @@ const DEFAULT_QUOTA_GUARD: QuotaGuardSettings = {
   primaryMinRemainingPercent: 5,
   secondaryMinRemainingPercent: 10,
   allowAllLowQuotaFallback: true,
+};
+
+const DEFAULT_RUNTIME_TIME_ZONE: RuntimeTimeZone = {
+  name: "Local",
+  offset: "",
+  source: "system",
 };
 
 /**
@@ -1549,58 +1554,6 @@ export function normalizeRequestLogListResult(payload: unknown): RequestLogListR
   };
 }
 
-export function normalizeGatewayErrorLogs(payload: unknown): GatewayErrorLog[] {
-  const source = asObject(payload);
-  const items = asArray(source.items ?? payload);
-  return items.reduce<GatewayErrorLog[]>((result, item) => {
-    const record = asObject(item);
-    const stage = asString(record.stage);
-    const method = asString(record.method);
-    const requestPath = asString(record.requestPath ?? record.request_path);
-    const createdAt = toNullableNumber(record.createdAt ?? record.created_at);
-    if (!stage || !method || !requestPath) {
-      return result;
-    }
-    result.push({
-      traceId: asString(record.traceId ?? record.trace_id),
-      keyId: asString(record.keyId ?? record.key_id),
-      accountId: asString(record.accountId ?? record.account_id),
-      requestPath,
-      method,
-      stage,
-      errorKind: asString(record.errorKind ?? record.error_kind),
-      upstreamUrl: asString(record.upstreamUrl ?? record.upstream_url),
-      cfRay: asString(record.cfRay ?? record.cf_ray),
-      statusCode: toNullableNumber(record.statusCode ?? record.status_code),
-      compressionEnabled: asBoolean(
-        record.compressionEnabled ?? record.compression_enabled,
-        false
-      ),
-      compressionRetryAttempted: asBoolean(
-        record.compressionRetryAttempted ?? record.compression_retry_attempted,
-        false
-      ),
-      message: asString(record.message),
-      createdAt,
-    });
-    return result;
-  }, []);
-}
-
-export function normalizeGatewayErrorLogListResult(
-  payload: unknown
-): GatewayErrorLogListResult {
-  const source = asObject(payload);
-  const items = normalizeGatewayErrorLogs(source.items ?? payload);
-  return {
-    items,
-    total: asInteger(source.total, items.length, 0),
-    page: asInteger(source.page, 1, 1),
-    pageSize: asInteger(source.pageSize, items.length || 10, 1),
-    stages: asArray(source.stages).map((item) => asString(item)).filter(Boolean),
-  };
-}
-
 /**
  * 函数 `normalizeRequestLogFilterSummary`
  *
@@ -1751,6 +1704,15 @@ export function normalizeQuotaGuard(payload: unknown): QuotaGuardSettings {
   };
 }
 
+export function normalizeRuntimeTimeZone(payload: unknown): RuntimeTimeZone {
+  const source = asObject(payload);
+  return {
+    name: asString(source.name) || DEFAULT_RUNTIME_TIME_ZONE.name,
+    offset: asString(source.offset),
+    source: asString(source.source) || DEFAULT_RUNTIME_TIME_ZONE.source,
+  };
+}
+
 export function normalizeEnvOverrideCatalog(payload: unknown): EnvOverrideCatalogItem[] {
   return asArray(payload).reduce<EnvOverrideCatalogItem[]>((result, item) => {
     const source = asObject(item);
@@ -1857,6 +1819,7 @@ export function normalizeAppSettings(payload: unknown): AppSettings {
     upstreamTotalTimeoutMs: asInteger(source.upstreamTotalTimeoutMs, 0, 0),
     sseKeepaliveIntervalMs: asInteger(source.sseKeepaliveIntervalMs, 15_000, 1),
     backgroundTasks: normalizeBackgroundTasks(source.backgroundTasks),
+    runtimeTimeZone: normalizeRuntimeTimeZone(source.runtimeTimeZone),
     envOverrides: normalizeStringRecord(source.envOverrides),
     envOverrideCatalog: normalizeEnvOverrideCatalog(source.envOverrideCatalog),
     envOverrideReservedKeys: asArray(source.envOverrideReservedKeys).map((item) =>

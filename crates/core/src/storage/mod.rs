@@ -12,7 +12,7 @@ mod api_key_quota_limits;
 mod api_keys;
 mod conversation_bindings;
 mod events;
-mod gateway_error_logs;
+mod key_id_filters;
 mod model_groups;
 mod model_options;
 mod model_price_rules;
@@ -93,6 +93,15 @@ pub struct ModelSourceMapping {
     pub weight: i64,
     pub billing_model_slug: Option<String>,
     pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct ModelSourceMappingPreference {
+    pub source_kind: String,
+    pub source_id: String,
+    pub upstream_model: String,
+    pub preference: String,
     pub updated_at: i64,
 }
 
@@ -245,24 +254,6 @@ pub struct RequestLogQuerySummary {
     pub error_count: i64,
     pub total_tokens: i64,
     pub estimated_cost_usd: f64,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct GatewayErrorLog {
-    pub trace_id: Option<String>,
-    pub key_id: Option<String>,
-    pub account_id: Option<String>,
-    pub request_path: String,
-    pub method: String,
-    pub stage: String,
-    pub error_kind: Option<String>,
-    pub upstream_url: Option<String>,
-    pub cf_ray: Option<String>,
-    pub status_code: Option<i64>,
-    pub compression_enabled: bool,
-    pub compression_retry_attempted: bool,
-    pub message: String,
-    pub created_at: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -914,11 +905,6 @@ impl Storage {
             include_str!("../../migrations/040_plugins.sql"),
         )?;
         self.apply_sql_or_compat_migration(
-            "041_gateway_error_logs",
-            include_str!("../../migrations/041_gateway_error_logs.sql"),
-            |s| s.ensure_gateway_error_logs_table(),
-        )?;
-        self.apply_sql_or_compat_migration(
             "042_request_logs_request_type_service_tier",
             include_str!("../../migrations/042_request_logs_request_type_service_tier.sql"),
             |s| s.ensure_request_log_request_type_and_service_tier_columns(),
@@ -1027,6 +1013,15 @@ impl Storage {
         self.apply_compat_migration("063_account_subscriptions_account_plan_type", |s| {
             s.ensure_account_subscriptions_table()
         })?;
+        self.apply_sql_migration(
+            "064_drop_gateway_error_logs",
+            include_str!("../../migrations/064_drop_gateway_error_logs.sql"),
+        )?;
+        self.apply_sql_or_compat_migration(
+            "065_model_source_mapping_preferences",
+            include_str!("../../migrations/065_model_source_mapping_preferences.sql"),
+            |s| s.ensure_model_source_tables(),
+        )?;
         self.ensure_api_key_rotation_columns()?;
         self.ensure_aggregate_apis_table()?;
         self.ensure_aggregate_api_supplier_model_tables()?;
@@ -1035,7 +1030,6 @@ impl Storage {
         self.ensure_api_key_quota_limits_table()?;
         self.ensure_model_price_rules_table()?;
         self.ensure_request_token_stats_table()?;
-        self.ensure_gateway_error_logs_table()?;
         self.ensure_request_log_request_type_and_service_tier_columns()?;
         self.ensure_request_log_effective_service_tier_column()?;
         self.ensure_request_log_first_response_column()?;

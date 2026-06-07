@@ -1,6 +1,7 @@
 use crate::app_settings::{list_app_settings_map, listener_bind_addr_for_mode};
 use crate::initialize_storage_if_needed;
 use crate::{current_web_auth_mode, distribution_enabled, web_access_password_configured};
+use chrono::Local;
 use codexmanager_core::rpc::types::ModelInfo;
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -16,17 +17,16 @@ use super::{
     current_gateway_model_forward_rules, current_gateway_originator, current_gateway_quota_guard,
     current_gateway_residency_requirement, current_gateway_sse_keepalive_interval_ms,
     current_gateway_upstream_stream_timeout_ms, current_gateway_upstream_total_timeout_ms,
-    current_gateway_user_agent_version,
-    current_lightweight_mode_on_close_to_tray_setting, current_saved_service_addr,
-    current_service_bind_mode, current_ui_appearance_preset, current_ui_locale,
-    current_ui_low_transparency_enabled, current_ui_theme, current_update_auto_check_enabled,
-    default_gateway_originator, default_gateway_user_agent_version, env_override_catalog_value,
-    env_override_reserved_keys, env_override_unsupported_keys, residency_requirement_options,
-    save_env_overrides_value, save_persisted_app_setting, save_persisted_bool_setting,
-    sync_runtime_settings_from_storage, APP_SETTING_AUTHOR_SERVER_RECOMMENDATIONS_KEY,
-    APP_SETTING_AUTHOR_SPONSORS_KEY, APP_SETTING_CLOSE_TO_TRAY_ON_CLOSE_KEY,
-    APP_SETTING_GATEWAY_ACCOUNT_MAX_INFLIGHT_KEY, APP_SETTING_GATEWAY_BACKGROUND_TASKS_KEY,
-    APP_SETTING_GATEWAY_COMPACT_MODEL_FORWARD_RULES_KEY,
+    current_gateway_user_agent_version, current_lightweight_mode_on_close_to_tray_setting,
+    current_saved_service_addr, current_service_bind_mode, current_ui_appearance_preset,
+    current_ui_locale, current_ui_low_transparency_enabled, current_ui_theme,
+    current_update_auto_check_enabled, default_gateway_originator,
+    default_gateway_user_agent_version, env_override_catalog_value, env_override_reserved_keys,
+    env_override_unsupported_keys, residency_requirement_options, save_env_overrides_value,
+    save_persisted_app_setting, save_persisted_bool_setting, sync_runtime_settings_from_storage,
+    APP_SETTING_AUTHOR_SERVER_RECOMMENDATIONS_KEY, APP_SETTING_AUTHOR_SPONSORS_KEY,
+    APP_SETTING_CLOSE_TO_TRAY_ON_CLOSE_KEY, APP_SETTING_GATEWAY_ACCOUNT_MAX_INFLIGHT_KEY,
+    APP_SETTING_GATEWAY_BACKGROUND_TASKS_KEY, APP_SETTING_GATEWAY_COMPACT_MODEL_FORWARD_RULES_KEY,
     APP_SETTING_GATEWAY_FREE_ACCOUNT_MAX_MODEL_KEY, APP_SETTING_GATEWAY_MODEL_FORWARD_RULES_KEY,
     APP_SETTING_GATEWAY_ORIGINATOR_KEY, APP_SETTING_GATEWAY_QUOTA_GUARD_KEY,
     APP_SETTING_GATEWAY_RESIDENCY_REQUIREMENT_KEY, APP_SETTING_GATEWAY_ROUTE_STRATEGY_KEY,
@@ -79,6 +79,28 @@ fn normalize_service_bind_mode_value(raw: Option<&str>) -> &'static str {
     }
 }
 
+fn current_runtime_time_zone_value() -> Value {
+    let env_tz = std::env::var("TZ")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let offset = Local::now().offset().to_string();
+    let source = if env_tz.is_some() { "TZ" } else { "system" };
+    let name = env_tz.unwrap_or_else(|| {
+        if offset == "+00:00" {
+            "UTC".to_string()
+        } else {
+            "Local".to_string()
+        }
+    });
+
+    serde_json::json!({
+        "name": name,
+        "offset": offset,
+        "source": source,
+    })
+}
+
 /// 函数 `current_app_settings_value`
 ///
 /// 作者: gaohongshun
@@ -98,6 +120,7 @@ pub(super) fn current_app_settings_value(
     initialize_storage_if_needed()?;
     sync_runtime_settings_from_storage();
     let background_tasks = current_background_tasks_snapshot_value()?;
+    let runtime_time_zone = current_runtime_time_zone_value();
     let update_auto_check = current_update_auto_check_enabled();
     let persisted_close_to_tray = current_close_to_tray_on_close_setting();
     let close_to_tray = close_to_tray_on_close.unwrap_or(persisted_close_to_tray);
@@ -260,6 +283,7 @@ pub(super) fn current_app_settings_value(
         "webAccessPasswordConfigured": web_access_password_configured(),
     });
     if let Some(object) = result.as_object_mut() {
+        object.insert("runtimeTimeZone".to_string(), runtime_time_zone);
         object.insert("webAuthMode".to_string(), current_web_auth_mode().into());
         object.insert(
             "webAuthModeOptions".to_string(),

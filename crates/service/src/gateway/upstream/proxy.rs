@@ -116,6 +116,17 @@ fn should_fallback_to_aggregate_after_account_exhaustion(
     is_hybrid_account_first_route(execution_plan)
 }
 
+fn low_quota_candidate_mode_for_protocol(
+    protocol_type: &str,
+) -> super::super::LowQuotaCandidateMode {
+    if protocol_type == PROTOCOL_ANTHROPIC_NATIVE {
+        // 中文注释：Anthropic messages 兼容请求容易触发账号级 Cloudflare challenge；
+        // 只在该协议下把低额度账号放到末尾兜底，普通 Codex 路径仍保留原有配额保护。
+        return super::super::LowQuotaCandidateMode::AppendFallback;
+    }
+    super::super::LowQuotaCandidateMode::NormalOnly
+}
+
 fn executor_kind_label(value: GatewayUpstreamExecutorKind) -> &'static str {
     match value {
         GatewayUpstreamExecutorKind::CodexResponses => "codex_responses",
@@ -159,13 +170,45 @@ fn model_route_error(
     let mappings = storage
         .list_enabled_model_source_mappings_for_platform(model)
         .map_err(|err| (500, format!("model_mapping_read_failed: {err}")))?;
-    if !mappings
+    let has_route_mapping = mappings
         .into_iter()
-        .any(|mapping| source_mapping_matches_route(mapping.source_kind.as_str(), execution_plan))
-    {
+        .any(|mapping| source_mapping_matches_route(mapping.source_kind.as_str(), execution_plan));
+    let has_upstream_source_match = if has_route_mapping {
+        true
+    } else {
+        direct_upstream_model_matches_route(storage, model, execution_plan)
+            .map_err(|err| (500, format!("source_model_read_failed: {err}")))?
+    };
+    if !has_upstream_source_match {
         return Err((503, format!("model_unavailable: {model}")));
     }
     Ok(())
+}
+
+fn direct_upstream_model_matches_route(
+    storage: &codexmanager_core::storage::Storage,
+    model: &str,
+    execution_plan: super::executor::GatewayUpstreamExecutionPlan,
+) -> Result<bool, String> {
+    let matches_source_kind = |source_kind: &str| match execution_plan.route_kind {
+        GatewayUpstreamRouteKind::AccountRotation => source_kind == "openai_account",
+        GatewayUpstreamRouteKind::AggregateApi => source_kind == "aggregate_api",
+        GatewayUpstreamRouteKind::HybridAccountFirst => {
+            source_kind == "openai_account" || source_kind == "aggregate_api"
+        }
+    };
+    for source_kind in ["openai_account", "aggregate_api"] {
+        if !matches_source_kind(source_kind) {
+            continue;
+        }
+        let ids = storage
+            .list_available_source_model_ids_by_upstream_model(source_kind, model)
+            .map_err(|err| err.to_string())?;
+        if !ids.is_empty() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn bootstrap_model_routes_for_plan(
@@ -656,6 +699,7 @@ pub(in super::super) fn proxy_validated_request(
         model_for_log.as_deref(),
         reasoning_for_log.as_deref(),
         account_plan_filter.as_deref(),
+        low_quota_candidate_mode_for_protocol(protocol_type.as_str()),
         respond_when_account_candidates_empty(execution_plan),
     ) {
         CandidatePrecheckResult::Ready {
@@ -900,7 +944,7 @@ mod tests {
     use codexmanager_core::rpc::types::{
         ManagedModelCatalogEntry, ManagedModelCatalogResult, ModelInfo,
     };
-    use codexmanager_core::storage::{now_ts, AggregateApi, ModelSourceMapping, Storage};
+    use codexmanager_core::storage::{now_ts, Account, AggregateApi, ModelSourceMapping, Storage};
     use std::collections::BTreeMap;
     use std::time::{Duration, Instant};
 
@@ -1309,5 +1353,42 @@ mod tests {
             execution_plan(GatewayUpstreamRouteKind::HybridAccountFirst),
         )
         .expect("hybrid route should accept aggregate mapping");
+    }
+
+    #[test]
+    fn account_route_model_validation_accepts_direct_upstream_source_model() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        storage.init().expect("init storage");
+        let now = now_ts();
+        storage
+            .insert_account(&Account {
+                id: "acc-direct-route".to_string(),
+                label: "acc-direct-route".to_string(),
+                issuer: "issuer".to_string(),
+                chatgpt_account_id: None,
+                workspace_id: None,
+                group_name: None,
+                sort: 0,
+                status: "active".to_string(),
+                created_at: now,
+                updated_at: now,
+            })
+            .expect("insert account");
+        storage
+            .upsert_discovered_model_source_models(
+                "openai_account",
+                "acc-direct-route",
+                &["gpt-5.4-mini".to_string()],
+                "manual",
+            )
+            .expect("seed direct upstream source model");
+
+        model_route_error(
+            &storage,
+            "key-route",
+            Some("gpt-5.4-mini"),
+            execution_plan(GatewayUpstreamRouteKind::AccountRotation),
+        )
+        .expect("account route should accept direct upstream source model");
     }
 }

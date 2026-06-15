@@ -322,6 +322,20 @@ fn resolve_aggregate_candidates_for_route(
     else {
         return Ok(candidates);
     };
+    let enabled_mappings = storage
+        .list_enabled_model_source_mappings_for_platform(model)
+        .map_err(|err| format!("list model source mappings failed: {err}"))?;
+    let aggregate_api_mappings = enabled_mappings
+        .iter()
+        .filter(|mapping| mapping.source_kind == "aggregate_api")
+        .collect::<Vec<_>>();
+    if !aggregate_api_mappings.is_empty() {
+        let allowed_source_ids = aggregate_api_mappings
+            .into_iter()
+            .map(|mapping| mapping.source_id.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        candidates.retain(|api| allowed_source_ids.contains(api.id.as_str()));
+    }
     candidates = candidates
         .into_iter()
         .map(|mut api| {
@@ -1296,6 +1310,112 @@ mod tests {
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].id, "agg-default-override");
         assert_eq!(candidates[0].model_override, None);
+    }
+
+    #[test]
+    fn aggregate_candidates_prefer_enabled_mapped_sources_when_present() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        storage.init().expect("init storage");
+        let now = now_ts();
+        storage
+            .insert_aggregate_api(&AggregateApi {
+                id: "agg-allowed".to_string(),
+                provider_type: "codex".to_string(),
+                supplier_name: Some("agg-allowed".to_string()),
+                sort: 0,
+                url: "https://agg-allowed.example/v1".to_string(),
+                auth_type: "apikey".to_string(),
+                auth_params_json: None,
+                action: None,
+                model_override: None,
+                status: "active".to_string(),
+                created_at: now,
+                updated_at: now,
+                last_test_at: None,
+                last_test_status: None,
+                last_test_error: None,
+                balance_query_enabled: false,
+                balance_query_template: None,
+                balance_query_base_url: None,
+                balance_query_user_id: None,
+                balance_query_config_json: None,
+                last_balance_at: None,
+                last_balance_status: None,
+                last_balance_error: None,
+                last_balance_json: None,
+            })
+            .expect("insert allowed aggregate api");
+        storage
+            .insert_aggregate_api(&AggregateApi {
+                id: "agg-blocked".to_string(),
+                provider_type: "codex".to_string(),
+                supplier_name: Some("agg-blocked".to_string()),
+                sort: 1,
+                url: "https://agg-blocked.example/v1".to_string(),
+                auth_type: "apikey".to_string(),
+                auth_params_json: None,
+                action: None,
+                model_override: None,
+                status: "active".to_string(),
+                created_at: now,
+                updated_at: now,
+                last_test_at: None,
+                last_test_status: None,
+                last_test_error: None,
+                balance_query_enabled: false,
+                balance_query_template: None,
+                balance_query_base_url: None,
+                balance_query_user_id: None,
+                balance_query_config_json: None,
+                last_balance_at: None,
+                last_balance_status: None,
+                last_balance_error: None,
+                last_balance_json: None,
+            })
+            .expect("insert blocked aggregate api");
+        storage
+            .upsert_model_source_mapping(&ModelSourceMapping {
+                id: "mapping-allowed".to_string(),
+                platform_model_slug: "gpt-5.5".to_string(),
+                source_kind: "aggregate_api".to_string(),
+                source_id: "agg-allowed".to_string(),
+                upstream_model: "vendor-5.5".to_string(),
+                enabled: true,
+                priority: 10,
+                weight: 1,
+                billing_model_slug: None,
+                created_at: now,
+                updated_at: now,
+            })
+            .expect("insert allowed mapping");
+        storage
+            .upsert_model_source_mapping(&ModelSourceMapping {
+                id: "mapping-blocked".to_string(),
+                platform_model_slug: "gpt-5.5".to_string(),
+                source_kind: "aggregate_api".to_string(),
+                source_id: "agg-blocked".to_string(),
+                upstream_model: "vendor-5.5".to_string(),
+                enabled: false,
+                priority: 0,
+                weight: 1,
+                billing_model_slug: None,
+                created_at: now,
+                updated_at: now,
+            })
+            .expect("insert blocked mapping");
+        seed_platform_catalog(&storage, "gpt-5.5");
+
+        let candidates = super::resolve_aggregate_candidates_for_route(
+            &storage,
+            crate::apikey_profile::PROTOCOL_OPENAI_COMPAT,
+            None,
+            Some("gpt-5.5"),
+        )
+        .expect("aggregate candidates should honor enabled mapping filter");
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].id, "agg-allowed");
+        assert_eq!(candidates[0].model_override, Some("vendor-5.5".to_string()));
     }
 
     #[test]
